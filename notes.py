@@ -3,7 +3,10 @@ import pygame
 
 pygame.init()
 
-WIDTH, HEIGHT = 1200, 600
+all_monitors = pygame.display.get_desktop_sizes()
+
+WIDTH, HEIGHT = all_monitors[0][0], all_monitors[0][1] - 100
+
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.key.set_repeat(200, 50)
 
@@ -101,8 +104,8 @@ while running:
                     popped = text.pop(cursor[1])
                     text[cursor[1]-1] += popped
                     if len(text[cursor[1]-1]) > (WIDTH//cw)-1:
-                        window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1)
-                        window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1)
+                        window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
+                        window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
                     cursor[1] -= 1
                     w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
                     all_text = '\n'.join(w_text)
@@ -112,8 +115,8 @@ while running:
                     popped = text.pop(cursor[1])
                     text[cursor[1]-1] += popped
                     if len(text[cursor[1]-1]) > (WIDTH//cw)-1:
-                        window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1)
-                        window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1)
+                        window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
+                        window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
                     cursor[1] -= 1
                     w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
                     all_text = '\n'.join(w_text)
