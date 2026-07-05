@@ -79,6 +79,14 @@ def render_window():
     text_surface = font.render(all_text, False, text_color)
     return text_surface
 
+def slide_x(n):
+    window_x[0] += n
+    window_x[1] += n
+
+def slide_y(n):
+    window_y[0] += n
+    window_y[1] += n
+
 dialog_surface = pygame.Surface((300,100))
 unsaved_dialog = unsavedDialog(dialog_surface)
 
@@ -104,8 +112,7 @@ while running:
                 cx = cursor[0]
                 if cx == window_x[0]+3 and cx > 0:
                     if window_x[0] > 0:
-                        window_x[0] -= 1
-                        window_x[1] -= 1
+                        slide_x(-1)
                         w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
                         all_text = '\n'.join(w_text)
                         text_surface = font.render(all_text, False, text_color)
@@ -114,8 +121,7 @@ while running:
                 cx = cursor[0]
                 if cx >= window_x[1]-3 and cx > 0:
                     if window_x[1] < len(text[cursor[1]]):
-                        window_x[0] += 1
-                        window_x[1] += 1
+                        slide_x(1)
                         w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
                         all_text = '\n'.join(w_text)
                         text_surface = font.render(all_text, False, text_color)
@@ -127,8 +133,7 @@ while running:
                 wflag = 0
                 if cy == window_y[0]+3 and cy > 0:
                     if window_y[0] > 0:
-                        window_y[0] -= 1
-                        window_y[1] -= 1
+                        slide_y(-1)
                         wflag = 1
                 if len(text[cursor[1]]) < len(text[cy]):
                     window_x[0] = max(len(text[cursor[1]]) - ((WIDTH//cw)-1), 0)
@@ -143,8 +148,7 @@ while running:
                 wflag = 0
                 if cy == window_y[1]-3 and cy > 0:
                     if window_y[1] < len(text):
-                        window_y[0] += 1
-                        window_y[1] += 1
+                        slide_y(1)
                         wflag = 1
                 if len(text[cursor[1]]) < len(text[cy]):
                     window_x[0] = max(len(text[cursor[1]]) - ((WIDTH//cw)-1), 0)
@@ -158,21 +162,18 @@ while running:
                     text[cursor[1]] = text[cursor[1]][:cursor[0]-1] + text[cursor[1]][cursor[0]:]
                     if cursor[0] <= window_x[0]+3:
                         if window_x[0] > 0:
-                            window_x[0] -= 1
-                            window_x[1] -= 1
+                            slide_x(-1)
                     cursor[0] -= 1
                     cursor[0] = max(0, cursor[0])
                     text_surface = render_window()
                 elif cursor[0] == 0 and cursor[1] == window_y[0]+3 and cursor[1] > 0:
                     if window_y[0] > 0:
-                        window_y[0] -= 1
-                        window_y[1] -= 1
+                        slide_y(-1)
                     cursor[0] = len(text[cursor[1]-1])
                     popped = text.pop(cursor[1])
                     text[cursor[1]-1] += popped
                     if len(text[cursor[1]-1]) > (WIDTH//cw)-1:
-                        window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
-                        window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
+                        slide_x(len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped))
                     cursor[1] -= 1
                     text_surface = render_window()
                 elif cursor[0] == 0 and cursor[1]>0:
@@ -180,8 +181,7 @@ while running:
                     popped = text.pop(cursor[1])
                     text[cursor[1]-1] += popped
                     if len(text[cursor[1]-1]) > (WIDTH//cw)-1:
-                        window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
-                        window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
+                        slide_x(len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped))
                     cursor[1] -= 1
                     text_surface = render_window()
             elif event.key == pygame.K_TAB:
@@ -189,16 +189,14 @@ while running:
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " "*4 + text[cursor[1]][cursor[0]:]
                 if cursor[0] > window_x[1]-4:
                     w1 = window_x[1]
-                    window_x[1] += 4-(w1 - cursor[0])
-                    window_x[0] += 4-(w1 - cursor[0])
+                    slide_x(4-(w1 - cursor[0]))
                 cursor[0] += 4
                 text_surface = render_window()
             elif event.key == pygame.K_SPACE:
                 pygame.display.set_caption(caption + "*")
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " " + text[cursor[1]][cursor[0]:]
                 if cursor[0] == window_x[1]:
-                    window_x[0] += 1
-                    window_x[1] += 1
+                    slide_x(1)
                 cursor[0] += 1
                 text_surface = render_window()
             elif event.key == pygame.K_RETURN:
@@ -209,8 +207,7 @@ while running:
                 cursor[1] += 1
                 cursor[0] = 0
                 if cursor[1] == window_y[1]:
-                    window_y[0] += 1
-                    window_y[1] += 1
+                    slide_y(1)
                 window_x[0] = 0
                 window_x[1] = (WIDTH//cw)-1
                 text_surface = render_window()
@@ -232,8 +229,7 @@ while running:
                     pygame.display.set_caption(caption + "*")
                     text[cursor[1]] = new_text
                     if cursor[0] == window_x[1]:
-                        window_x[0] += 1
-                        window_x[1] += 1
+                        slide_x(1)
                     cursor[0] += 1
                     text_surface = render_window()
 
