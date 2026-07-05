@@ -1,4 +1,8 @@
 import pygame
+import os
+from pathlib import Path
+import sys
+import tempfile
 # from suggest import Tree
 
 pygame.init()
@@ -18,7 +22,25 @@ font = pygame.font.SysFont("firacodemedium", 16)
 window_x = [0, (WIDTH//cw) - 1]
 window_y = [0, (HEIGHT//(ch+offset_)) - 1]
 
-text = [""]
+filepath = None
+
+if len(sys.argv) > 1:
+    filepath = Path(sys.argv[1])
+    if os.path.exists(filepath):
+        with open(filepath, "r") as file:
+            text = file.readlines()
+    else:
+        print("File doesn't exist")
+        quit()
+else:
+    filepath = Path("~/Notes/new.txt").expanduser()
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "w") as file:
+        file.write("")
+    text = [""]
+
+default_save_dir = "~/Notes/"
+
 w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
 all_text = '\n'.join(w_text)
 
@@ -32,6 +54,34 @@ clock = pygame.time.Clock()
 
 running = True
 
+fstr = str(filepath)
+if len(fstr) > 20:
+    caption = fstr[:10] + "..." + fstr[10:]
+else:
+    caption = fstr
+
+pygame.display.set_caption(caption)
+
+unsaved_exit = False
+
+def unsavedDialog(surface_):
+    rect_ = pygame.Rect(0, 0, 300, 100)
+    rect_.center = screen.get_rect().center
+    pygame.draw.rect(surface_, (128, 128, 128), rect_)
+    question = "Quit without saving? (y/n)"
+    texts = font.render(question, False, (128, 128, 0))
+    surface_.blit(texts, (20,40))
+    return surface_
+
+def render_window():
+    w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
+    all_text = '\n'.join(w_text)
+    text_surface = font.render(all_text, False, text_color)
+    return text_surface
+
+dialog_surface = pygame.Surface((300,100))
+unsaved_dialog = unsavedDialog(dialog_surface)
+
 while running:
     screen.fill((32,32,32))
 
@@ -41,7 +91,15 @@ while running:
 
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
+                captioncheck = pygame.display.get_caption()[0][-1]
+                if captioncheck == "*":
+                    unsaved_exit = True
+                else:
+                    running = False
+            elif event.key == pygame.K_y and unsaved_exit == True:
                 running = False
+            elif event.key == pygame.K_n and unsaved_exit == True:
+                unsaved_exit = False
             elif event.key == pygame.K_LEFT:
                 cx = cursor[0]
                 if cx == window_x[0]+3 and cx > 0:
@@ -77,9 +135,7 @@ while running:
                     window_x[1] = max(len(text[cursor[1]]), (WIDTH//cw)-1)
                     wflag = 1
                 if wflag == 1:
-                    w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                    all_text = '\n'.join(w_text)
-                    text_surface = font.render(all_text, False, text_color)
+                    text_surface = render_window()
             elif event.key == pygame.K_DOWN:
                 cy = cursor[1]
                 cursor[1] = min(len(text)-1, cy+1)
@@ -95,10 +151,9 @@ while running:
                     window_x[1] = max(len(text[cursor[1]]), (WIDTH//cw)-1)
                     wflag = 1
                 if wflag == 1:
-                    w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                    all_text = '\n'.join(w_text)
-                    text_surface = font.render(all_text, False, text_color)
+                    text_surface = render_window()
             elif event.key == pygame.K_BACKSPACE:
+                pygame.display.set_caption(caption + "*")
                 if cursor[0] > 0 and text[cursor[1]]:
                     text[cursor[1]] = text[cursor[1]][:cursor[0]-1] + text[cursor[1]][cursor[0]:]
                     if cursor[0] <= window_x[0]+3:
@@ -107,9 +162,7 @@ while running:
                             window_x[1] -= 1
                     cursor[0] -= 1
                     cursor[0] = max(0, cursor[0])
-                    w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                    all_text = '\n'.join(w_text)
-                    text_surface = font.render(all_text, False, text_color)
+                    text_surface = render_window()
                 elif cursor[0] == 0 and cursor[1] == window_y[0]+3 and cursor[1] > 0:
                     if window_y[0] > 0:
                         window_y[0] -= 1
@@ -121,9 +174,7 @@ while running:
                         window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
                         window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
                     cursor[1] -= 1
-                    w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                    all_text = '\n'.join(w_text)
-                    text_surface = font.render(all_text, False, text_color)
+                    text_surface = render_window()
                 elif cursor[0] == 0 and cursor[1]>0:
                     cursor[0] = len(text[cursor[1]-1])
                     popped = text.pop(cursor[1])
@@ -132,29 +183,26 @@ while running:
                         window_x[0] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
                         window_x[1] += len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped)
                     cursor[1] -= 1
-                    w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                    all_text = '\n'.join(w_text)
-                    text_surface = font.render(all_text, False, text_color)
+                    text_surface = render_window()
             elif event.key == pygame.K_TAB:
+                pygame.display.set_caption(caption + "*")
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " "*4 + text[cursor[1]][cursor[0]:]
                 if cursor[0] > window_x[1]-4:
                     w1 = window_x[1]
                     window_x[1] += 4-(w1 - cursor[0])
                     window_x[0] += 4-(w1 - cursor[0])
                 cursor[0] += 4
-                w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                all_text = '\n'.join(w_text)
-                text_surface = font.render(all_text, False, text_color)
+                text_surface = render_window()
             elif event.key == pygame.K_SPACE:
+                pygame.display.set_caption(caption + "*")
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " " + text[cursor[1]][cursor[0]:]
                 if cursor[0] == window_x[1]:
                     window_x[0] += 1
                     window_x[1] += 1
                 cursor[0] += 1
-                w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                all_text = '\n'.join(w_text)
-                text_surface = font.render(all_text, False, text_color)
+                text_surface = render_window()
             elif event.key == pygame.K_RETURN:
+                pygame.display.set_caption(caption + "*")
                 text.insert(cursor[1]+1, "")
                 text[cursor[1]+1] = text[cursor[1]][cursor[0]:]
                 text[cursor[1]] = text[cursor[1]][:cursor[0]]
@@ -165,24 +213,37 @@ while running:
                     window_y[1] += 1
                 window_x[0] = 0
                 window_x[1] = (WIDTH//cw)-1
-                w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                all_text = '\n'.join(w_text)
-                text_surface = font.render(all_text, False, text_color)
+                text_surface = render_window()
+            elif event.key == pygame.K_s and (event.mod & pygame.KMOD_CTRL):
+                fd, temp_path = tempfile.mkstemp(dir=filepath.parent, suffix=".tmp")
+                try:
+                    with os.fdopen(fd, 'w') as f:
+                        f.write("\n".join(text))
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(temp_path, filepath)
+                    pygame.display.set_caption(caption)
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
             else:
                 new_text = text[cursor[1]][:cursor[0]] + event.unicode + text[cursor[1]][cursor[0]:]
                 if len(new_text) != len(text[cursor[1]]):
+                    pygame.display.set_caption(caption + "*")
                     text[cursor[1]] = new_text
                     if cursor[0] == window_x[1]:
                         window_x[0] += 1
                         window_x[1] += 1
                     cursor[0] += 1
-                w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
-                all_text = '\n'.join(w_text)
-                text_surface = font.render(all_text, False, text_color)
+                    text_surface = render_window()
 
     
     pygame.draw.rect(screen, cursor_color, (cw*(cursor[0]-window_x[0]), (ch+offset_)*(cursor[1]-window_y[0]), cw, ch), 2)
     screen.blit(text_surface, (0,0))
+
+    if unsaved_exit == True:
+        screen.blit(unsaved_dialog, ((WIDTH//2)-150, (HEIGHT//2)-50))
+
     pygame.display.update()
     clock.tick(60)
 
