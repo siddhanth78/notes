@@ -172,16 +172,16 @@ while running:
                     cursor[0] = len(text[cursor[1]-1])
                     popped = text.pop(cursor[1])
                     text[cursor[1]-1] += popped
-                    if len(text[cursor[1]-1]) > (WIDTH//cw)-1:
-                        slide_x(len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped))
+                    if cursor[0] > (WIDTH//cw)-1:
+                        slide_x(cursor[0] - ((WIDTH//cw)-1))
                     cursor[1] -= 1
                     text_surface = render_window()
                 elif cursor[0] == 0 and cursor[1]>0:
                     cursor[0] = len(text[cursor[1]-1])
                     popped = text.pop(cursor[1])
                     text[cursor[1]-1] += popped
-                    if len(text[cursor[1]-1]) > (WIDTH//cw)-1:
-                        slide_x(len(text[cursor[1]-1]) - ((WIDTH//cw)-1) - len(popped))
+                    if cursor[0] > (WIDTH//cw)-1:
+                        slide_x(cursor[0] - ((WIDTH//cw)-1))
                     cursor[1] -= 1
                     text_surface = render_window()
             elif event.key == pygame.K_TAB:
