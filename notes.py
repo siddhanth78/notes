@@ -57,6 +57,7 @@ def open_note_explorer(base_dir):
         curses.init_pair(3, curses.COLOR_GREEN, -1)   # create-new option
 
         selected = 0
+        scroll = 0
         while True:
             curses.curs_set(0)
             entries = sorted(os.listdir(current_dir))
@@ -71,10 +72,24 @@ def open_note_explorer(base_dir):
             if current_dir != base_dir:
                 items.insert(0, ("..", current_dir.parent, "dir"))
 
+            h, w = stdscr.getmaxyx()
+            list_top = 3
+            list_bottom = h - 2
+            visible_rows = max(1, list_bottom - list_top)
+
+            if selected < scroll:
+                scroll = selected
+            elif selected >= scroll + visible_rows:
+                scroll = selected - visible_rows + 1
+            scroll = max(0, min(scroll, max(0, len(items) - visible_rows)))
+
             stdscr.clear()
             stdscr.addstr(0, 0, "Notes", curses.A_BOLD)
-            stdscr.addstr(1, 0, f"Dir: {current_dir}")
-            for idx, (name, _, kind) in enumerate(items):
+            stdscr.addstr(1, 0, f"Dir: {current_dir}"[:w-1])
+
+            visible_items = items[scroll:scroll + visible_rows]
+            for row, (name, _, kind) in enumerate(visible_items):
+                idx = scroll + row
                 prefix = "> " if idx == selected else "  "
                 if kind == "new":
                     color = curses.color_pair(3)
@@ -83,10 +98,9 @@ def open_note_explorer(base_dir):
                 else:
                     color = curses.color_pair(2)
                 attr = curses.A_REVERSE if idx == selected else color
-                stdscr.addstr(idx + 3, 0, prefix + name, attr)
+                stdscr.addstr(list_top + row, 0, (prefix + name)[:w-1], attr)
 
-            footer = "↑/↓ move  Enter select  Esc cancel"
-            h, w = stdscr.getmaxyx()
+            footer = f"↑/↓ move  Enter select  Esc cancel  ({selected+1}/{len(items)})"
             stdscr.addstr(h - 1, 0, footer[:w-1], curses.A_DIM)
             stdscr.refresh()
 
@@ -102,6 +116,7 @@ def open_note_explorer(base_dir):
                 if kind == "dir":
                     current_dir = path
                     selected = 0
+                    scroll = 0
                 elif kind == "file":
                     return path
                 elif kind == "new":
