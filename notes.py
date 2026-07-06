@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-# from suggest import Tree
+import pyperclip
 
 pygame.init()
 
@@ -122,6 +122,109 @@ def set_window():
     window_y[0] = max(cursor[1] - rows, 0)
     window_y[1] = window_y[0] + rows + 1
 
+def scroll_to_cursor():
+    if not (window_x[0] <= cursor[0] < window_x[1] and window_y[0] <= cursor[1] < window_y[1]):
+        set_window()
+
+def show_selections(origin, screen):
+    x1, y1 = origin
+    x2, y2 = cursor
+
+    if (y1, x1) > (y2, x2):
+        x1, y1, x2, y2 = x2, y2, x1, y1
+
+    selections = []
+
+    if y1 == y2:
+        end = min(x2 + 1, len(text[y1]))
+        selections.append((x1, y1, end - x1))
+    else:
+        selections.append((x1, y1, len(text[y1]) - x1))
+        for y in range(y1 + 1, y2):
+            selections.append((0, y, len(text[y])))
+        end = min(x2 + 1, len(text[y2]))
+        selections.append((0, y2, end))
+    
+    for x, y, length in selections:
+        if window_y[0] <= y < window_y[1]:
+            start_x = max(x, window_x[0])
+            end_x = min(x + length, window_x[1])
+            if start_x < end_x:
+                rect = pygame.Rect((start_x - window_x[0]) * cw, (y - window_y[0]) * (ch + offset_), (end_x - start_x) * cw, ch)
+                pygame.draw.rect(screen, (128, 128, 128), rect)
+
+clipboard = []
+
+def get_selection_range(origin):
+    x1, y1 = origin
+    x2, y2 = cursor
+    if (y1, x1) > (y2, x2):
+        x1, y1, x2, y2 = x2, y2, x1, y1
+    return x1, y1, x2, y2
+
+def get_selection_lines(origin):
+    x1, y1, x2, y2 = get_selection_range(origin)
+    lines = []
+    if y1 == y2:
+        end = min(x2 + 1, len(text[y1]))
+        lines.append(text[y1][x1:end])
+    else:
+        lines.append(text[y1][x1:])
+        for y in range(y1 + 1, y2):
+            lines.append(text[y])
+        end = min(x2 + 1, len(text[y2]))
+        lines.append(text[y2][:end])
+    return lines
+
+def delete_selection(origin):
+    x1, y1, x2, y2 = get_selection_range(origin)
+    if y1 == y2:
+        end = min(x2 + 1, len(text[y1]))
+        text[y1] = text[y1][:x1] + text[y1][end:]
+    else:
+        end = min(x2 + 1, len(text[y2]))
+        text[y1] = text[y1][:x1] + text[y2][end:]
+        del text[y1+1:y2+1]
+    cursor[0] = x1
+    cursor[1] = y1
+
+def paste_lines(lines_list):
+    if not lines_list:
+        return
+    if len(lines_list) == 1:
+        seg = lines_list[0]
+        text[cursor[1]] = text[cursor[1]][:cursor[0]] + seg + text[cursor[1]][cursor[0]:]
+        cursor[0] += len(seg)
+    else:
+        tail = text[cursor[1]][cursor[0]:]
+        head = text[cursor[1]][:cursor[0]] + lines_list[0]
+        middle = lines_list[1:-1]
+        last = lines_list[-1] + tail
+        text[cursor[1]] = head
+        text[cursor[1]+1:cursor[1]+1] = middle + [last]
+        cursor[1] += len(lines_list) - 1
+        cursor[0] = len(lines_list[-1])
+
+def safe_copy_lines(lines_list):
+    global clipboard_lines
+    clipboard_lines = lines_list
+    try:
+        pyperclip.copy(''.join(lines_list))
+    except pyperclip.PyperclipException:
+        pass
+
+def safe_paste_lines():
+    global clipboard_lines
+    try:
+        ext = pyperclip.paste()
+    except pyperclip.PyperclipException:
+        return clipboard_lines
+
+    if ext == ''.join(clipboard_lines):
+        return clipboard_lines
+
+    return ext.splitlines(keepends=True)
+
 dialog_surface = pygame.Surface((300,100))
 unsaved_dialog = unsavedDialog(dialog_surface)
 
@@ -166,7 +269,7 @@ while running:
                 cursor[1] = max(0, cy-1)
                 cursor[0] = min(len(text[cursor[1]]), cursor[0])
                 wflag = 0
-                if cy == window_y[0]+3 and cy > 0:
+                if cy <= window_y[0]+3 and cy > 0:
                     if window_y[0] > 0:
                         slide_y(-1)
                         wflag = 1
@@ -181,7 +284,7 @@ while running:
                 cursor[1] = min(len(text)-1, cy+1)
                 cursor[0] = min(len(text[cursor[1]]), cursor[0])
                 wflag = 0
-                if cy == window_y[1]-3 and cy > 0:
+                if cy >= window_y[1]-3 and cy > 0:
                     if window_y[1] < len(text):
                         slide_y(1)
                         wflag = 1
@@ -197,7 +300,7 @@ while running:
             elif event.key == pygame.K_MINUS and (event.mod & pygame.KMOD_CTRL) and (event.mod & pygame.KMOD_SHIFT) and unsaved_exit == False:
                 zoom(-1)
                 text_surface = render_window()
-            elif event.key == pygame.K_BACKSPACE and unsaved_exit == False:
+            elif event.key == pygame.K_BACKSPACE and unsaved_exit == False and selection == False:
                 pygame.display.set_caption(caption + "*")
                 if cursor[0] > 0 and text[cursor[1]]:
                     text[cursor[1]] = text[cursor[1]][:cursor[0]-1] + text[cursor[1]][cursor[0]:]
@@ -207,7 +310,7 @@ while running:
                     cursor[0] -= 1
                     cursor[0] = max(0, cursor[0])
                     text_surface = render_window()
-                elif cursor[0] == 0 and cursor[1] == window_y[0]+3 and cursor[1] > 0:
+                elif cursor[0] == 0 and cursor[1] <= window_y[0]+3 and cursor[1] > 0:
                     if window_y[0] > 0:
                         slide_y(-1)
                     cursor[0] = len(text[cursor[1]-1])
@@ -225,7 +328,7 @@ while running:
                         slide_x(cursor[0] - ((WIDTH//cw)-1))
                     cursor[1] -= 1
                     text_surface = render_window()
-            elif event.key == pygame.K_TAB and unsaved_exit == False:
+            elif event.key == pygame.K_TAB and unsaved_exit == False and selection == False:
                 pygame.display.set_caption(caption + "*")
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " "*4 + text[cursor[1]][cursor[0]:]
                 if cursor[0] > window_x[1]-4:
@@ -233,14 +336,14 @@ while running:
                     slide_x(4-(w1 - cursor[0]))
                 cursor[0] += 4
                 text_surface = render_window()
-            elif event.key == pygame.K_SPACE and unsaved_exit == False:
+            elif event.key == pygame.K_SPACE and unsaved_exit == False and selection == False:
                 pygame.display.set_caption(caption + "*")
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " " + text[cursor[1]][cursor[0]:]
                 if cursor[0] == window_x[1]:
                     slide_x(1)
                 cursor[0] += 1
                 text_surface = render_window()
-            elif event.key == pygame.K_RETURN and unsaved_exit == False:
+            elif event.key == pygame.K_RETURN and unsaved_exit == False and selection == False:
                 pygame.display.set_caption(caption + "*")
                 text.insert(cursor[1]+1, "")
                 text[cursor[1]+1] = text[cursor[1]][cursor[0]:]
@@ -264,12 +367,66 @@ while running:
                 finally:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
+            elif event.key == pygame.K_o and (event.mod & pygame.KMOD_CTRL) and (event.mod & pygame.KMOD_SHIFT) and unsaved_exit == False and selection == False:
+                pygame.display.set_caption(caption + "*")
+                text.insert(cursor[1] + 1, "")
+                cursor[1] += 1
+                cursor[0] = 0
+                scroll_to_cursor()
+                text_surface = render_window()
+            elif event.key == pygame.K_o and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False and selection == False:
+                pygame.display.set_caption(caption + "*")
+                text.insert(cursor[1], "")
+                cursor[0] = 0
+                scroll_to_cursor()
+                text_surface = render_window()
+            elif event.key == pygame.K_b and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
+                cursor[0] = 0
+                scroll_to_cursor()
+                text_surface = render_window()
+            elif event.key == pygame.K_e and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
+                cursor[0] = len(text[cursor[1]])
+                scroll_to_cursor()
+                text_surface = render_window()
+            elif event.key == pygame.K_c and selection and unsaved_exit == False:
+                safe_copy_lines(get_selection_lines(sel_origin))
+                selection = False
+                sel_origin = None
+
+            elif event.key == pygame.K_x and selection and unsaved_exit == False:
+                pygame.display.set_caption(caption + "*")
+                safe_copy_lines(get_selection_lines(sel_origin))
+                delete_selection(sel_origin)
+                selection = False
+                sel_origin = None
+                scroll_to_cursor()
+                text_surface = render_window()
+
+            elif event.key == pygame.K_p and selection and unsaved_exit == False:
+                pygame.display.set_caption(caption + "*")
+                delete_selection(sel_origin)
+                selection = False
+                sel_origin = None
+                paste_lines(safe_paste_lines())
+                scroll_to_cursor()
+                text_surface = render_window()
+
+            elif event.key == pygame.K_p and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
+                pygame.display.set_caption(caption + "*")
+                paste_lines(safe_paste_lines())
+                scroll_to_cursor()
+                text_surface = render_window()
+
             elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
                 selection = not selection
+                if selection:
+                    sel_origin = (cursor[0], cursor[1])
+                else:
+                    sel_origin = None
             elif event.mod & pygame.KMOD_CTRL:
                 pass
             else:
-                if unsaved_exit == False:
+                if unsaved_exit == False and selection == False and event.unicode.isprintable():
                     new_text = text[cursor[1]][:cursor[0]] + event.unicode + text[cursor[1]][cursor[0]:]
                     if len(new_text) != len(text[cursor[1]]):
                         pygame.display.set_caption(caption + "*")
@@ -280,6 +437,8 @@ while running:
                         text_surface = render_window()
 
     pygame.draw.rect(screen, (64, 64, 64), (0, (ch+offset_)*(cursor[1]-window_y[0]), WIDTH, ch))
+    if selection == True:
+        show_selections(sel_origin, screen)
     pygame.draw.rect(screen, cursor_color, (cw*(cursor[0]-window_x[0]), (ch+offset_)*(cursor[1]-window_y[0]), cw, ch), 2)
     screen.blit(text_surface, (0,0))
 
