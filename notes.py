@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import pyperclip
+import curses
 
 pygame.init()
 
@@ -31,22 +32,150 @@ window_y = [0, (HEIGHT//(ch+offset_)) - 1]
 
 filepath = None
 
+default_save_dir = "~/Notes/"
+
+SUPPORTED_EXTENSIONS = [
+    ".txt", ".md", ".py", ".json", ".csv",
+    ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".scss",
+    ".c", ".cpp", ".h", ".hpp", ".java", ".go", ".rs", ".rb", ".php",
+    ".sh", ".bash", ".zsh", ".sql", ".lua", ".pl", ".swift", ".kt",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env", ".xml",
+    ".rst", ".tex", ".log", ".tsv", ".gitignore", ".editorconfig"
+]
+
+def open_note_explorer(base_dir):
+    base_dir = Path(base_dir).expanduser()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    current_dir = base_dir
+
+    def run(stdscr):
+        nonlocal current_dir
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_CYAN, -1)    # directories
+        curses.init_pair(2, curses.COLOR_WHITE, -1)   # files
+        curses.init_pair(3, curses.COLOR_GREEN, -1)   # create-new option
+
+        selected = 0
+        while True:
+            curses.curs_set(0)
+            entries = sorted(os.listdir(current_dir))
+            items = [("+ Create new note here", None, "new")]
+            for e in entries:
+                full = current_dir / e
+                if full.is_dir():
+                    items.append((e + "/", full, "dir"))
+                elif os.path.splitext(e)[1] in SUPPORTED_EXTENSIONS:
+                    items.append((e, full, "file"))
+
+            if current_dir != base_dir:
+                items.insert(0, ("..", current_dir.parent, "dir"))
+
+            stdscr.clear()
+            stdscr.addstr(0, 0, "Notes", curses.A_BOLD)
+            stdscr.addstr(1, 0, f"Dir: {current_dir}")
+            for idx, (name, _, kind) in enumerate(items):
+                prefix = "> " if idx == selected else "  "
+                if kind == "new":
+                    color = curses.color_pair(3)
+                elif kind == "dir":
+                    color = curses.color_pair(1)
+                else:
+                    color = curses.color_pair(2)
+                attr = curses.A_REVERSE if idx == selected else color
+                stdscr.addstr(idx + 3, 0, prefix + name, attr)
+
+            footer = "↑/↓ move  Enter select  Esc cancel"
+            h, w = stdscr.getmaxyx()
+            stdscr.addstr(h - 1, 0, footer[:w-1], curses.A_DIM)
+            stdscr.refresh()
+
+            key = stdscr.getch()
+            if key == curses.KEY_UP:
+                selected = max(0, selected - 1)
+            elif key == curses.KEY_DOWN:
+                selected = min(len(items) - 1, selected + 1) if items else 0
+            elif key in (curses.KEY_ENTER, 10, 13):
+                if not items:
+                    continue
+                name, path, kind = items[selected]
+                if kind == "dir":
+                    current_dir = path
+                    selected = 0
+                elif kind == "file":
+                    return path
+                elif kind == "new":
+                    fname = prompt_filename(stdscr, current_dir)
+                    if fname == "__CANCEL__":
+                        continue
+                    if fname:
+                        rel = Path(fname)
+                        ext = rel.suffix
+                        if ext not in SUPPORTED_EXTENSIONS:
+                            continue
+                        target_dir = current_dir / rel.parent
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        return target_dir / rel.name
+            elif key == 27:
+                return None
+
+    return curses.wrapper(run)
+
+
+def prompt_filename(stdscr, current_dir):
+    curses.curs_set(1)
+    buf = ""
+    while True:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "Create new note", curses.A_BOLD)
+        label = f"New: {current_dir}/"
+        stdscr.addstr(2, 0, label, curses.color_pair(1))
+        stdscr.addstr(2, len(label), buf)
+
+        footer = "Type a filename + Enter  |  Esc to cancel"
+        h, w = stdscr.getmaxyx()
+        stdscr.addstr(h - 1, 0, footer[:w-1], curses.A_DIM)
+        stdscr.move(2, len(label) + len(buf))
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (curses.KEY_ENTER, 10, 13):
+            return buf.strip() if buf.strip() else None
+        elif key == 27:
+            return "__CANCEL__"
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            buf = buf[:-1]
+        elif 32 <= key <= 126:
+            buf += chr(key)
+
 if len(sys.argv) > 1:
     filepath = Path(sys.argv[1])
+    if os.path.splitext(filepath)[1] not in SUPPORTED_EXTENSIONS:
+        print("File not supported")
+        quit()
     if os.path.exists(filepath):
         with open(filepath, "r") as file:
-            text = file.readlines()
+            text = [line.rstrip('\n') for line in file.readlines()]
+        if not text:
+            text = [""]
     else:
         print("File doesn't exist")
         quit()
 else:
-    filepath = Path("~/Notes/new.txt").expanduser()
+    filepath = open_note_explorer(default_save_dir)
+    if filepath is None:
+        print("No file selected")
+        quit()
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    with open(filepath, "w") as file:
-        file.write("")
-    text = [""]
-
-default_save_dir = "~/Notes/"
+    if filepath.exists():
+        with open(filepath, "r") as file:
+            text = [line.rstrip('\n') for line in file.readlines()]
+        if not text:
+            text = [""]
+    else:
+        with open(filepath, "w") as file:
+            file.write("")
+        text = [""]
 
 w_text = [wt[window_x[0]:window_x[1]] for wt in text[window_y[0]:window_y[1]]]
 all_text = '\n'.join(w_text)
@@ -153,7 +282,7 @@ def show_selections(origin, screen):
                 rect = pygame.Rect((start_x - window_x[0]) * cw, (y - window_y[0]) * (ch + offset_), (end_x - start_x) * cw, ch)
                 pygame.draw.rect(screen, (128, 128, 128), rect)
 
-clipboard = []
+clipboard_lines = []
 
 def get_selection_range(origin):
     x1, y1 = origin
@@ -209,7 +338,7 @@ def safe_copy_lines(lines_list):
     global clipboard_lines
     clipboard_lines = lines_list
     try:
-        pyperclip.copy(''.join(lines_list))
+        pyperclip.copy('\n'.join(lines_list))
     except pyperclip.PyperclipException:
         pass
 
@@ -220,10 +349,10 @@ def safe_paste_lines():
     except pyperclip.PyperclipException:
         return clipboard_lines
 
-    if ext == ''.join(clipboard_lines):
+    if ext == '\n'.join(clipboard_lines):
         return clipboard_lines
 
-    return ext.splitlines(keepends=True)
+    return ext.split('\n')
 
 dialog_surface = pygame.Surface((300,100))
 unsaved_dialog = unsavedDialog(dialog_surface)
@@ -380,6 +509,16 @@ while running:
                 cursor[0] = 0
                 scroll_to_cursor()
                 text_surface = render_window()
+            elif event.key == pygame.K_d and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False and selection == False:
+                pygame.display.set_caption(caption + "*")
+                y = cursor[1]
+                del text[y]
+                if not text:
+                    text.append("")
+                cursor[1] = max(0, min(y - 1, len(text) - 1))
+                cursor[0] = 0
+                scroll_to_cursor()
+                text_surface = render_window()
             elif event.key == pygame.K_b and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
                 cursor[0] = 0
                 scroll_to_cursor()
@@ -392,7 +531,6 @@ while running:
                 safe_copy_lines(get_selection_lines(sel_origin))
                 selection = False
                 sel_origin = None
-
             elif event.key == pygame.K_x and selection and unsaved_exit == False:
                 pygame.display.set_caption(caption + "*")
                 safe_copy_lines(get_selection_lines(sel_origin))
@@ -401,7 +539,6 @@ while running:
                 sel_origin = None
                 scroll_to_cursor()
                 text_surface = render_window()
-
             elif event.key == pygame.K_p and selection and unsaved_exit == False:
                 pygame.display.set_caption(caption + "*")
                 delete_selection(sel_origin)
@@ -410,13 +547,11 @@ while running:
                 paste_lines(safe_paste_lines())
                 scroll_to_cursor()
                 text_surface = render_window()
-
             elif event.key == pygame.K_p and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
                 pygame.display.set_caption(caption + "*")
                 paste_lines(safe_paste_lines())
                 scroll_to_cursor()
                 text_surface = render_window()
-
             elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
                 selection = not selection
                 if selection:
