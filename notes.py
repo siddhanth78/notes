@@ -14,8 +14,8 @@ WIDTH, HEIGHT = all_monitors[0][0], all_monitors[0][1] - 100
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.key.set_repeat(200, 50)
 
-cw, ch = 15, 24
-offset_ = 6
+cw, ch = 12, 20
+offset_ = 5
 
 fonts = {
     16: pygame.font.SysFont("firacodemedium", 16),
