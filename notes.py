@@ -5,12 +5,21 @@ import sys
 import tempfile
 import pyperclip
 import curses
+import re
+import mmap
+import bisect
+import subprocess
+import json
+import shutil
 
 pygame.init()
 
+RG_PATH = shutil.which("rg")
+MAX_FILE_SIZE = 500 * 1024 * 1024
+
 all_monitors = pygame.display.get_desktop_sizes()
 
-WIDTH, HEIGHT = all_monitors[0][0], all_monitors[0][1] - 100
+WIDTH, HEIGHT = all_monitors[0][0], all_monitors[0][1] - 150
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.key.set_repeat(200, 50)
@@ -52,9 +61,9 @@ def open_note_explorer(base_dir):
         nonlocal current_dir
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_CYAN, -1)    # directories
-        curses.init_pair(2, curses.COLOR_WHITE, -1)   # files
-        curses.init_pair(3, curses.COLOR_GREEN, -1)   # create-new option
+        curses.init_pair(1, curses.COLOR_CYAN, -1)
+        curses.init_pair(2, curses.COLOR_WHITE, -1)
+        curses.init_pair(3, curses.COLOR_GREEN, -1)
 
         selected = 0
         scroll = 0
@@ -169,6 +178,9 @@ if len(sys.argv) > 1:
         print("File not supported")
         quit()
     if os.path.exists(filepath):
+        if os.path.getsize(filepath) > MAX_FILE_SIZE:
+            print("File too large (max 500MB)")
+            quit()
         with open(filepath, "r") as file:
             text = [line.rstrip('\n') for line in file.readlines()]
         if not text:
@@ -183,6 +195,9 @@ else:
         quit()
     filepath.parent.mkdir(parents=True, exist_ok=True)
     if filepath.exists():
+        if os.path.getsize(filepath) > MAX_FILE_SIZE:
+            print("File too large (max 500MB)")
+            quit()
         with open(filepath, "r") as file:
             text = [line.rstrip('\n') for line in file.readlines()]
         if not text:
@@ -299,6 +314,12 @@ def show_selections(origin, screen):
 
 clipboard_lines = []
 
+mode = "normal"
+input_buffer = ""
+last_pattern = ""
+current_replacement = ""
+status_message = ""
+
 def get_selection_range(origin):
     x1, y1 = origin
     x2, y2 = cursor
@@ -369,6 +390,149 @@ def safe_paste_lines():
 
     return ext.split('\n')
 
+def compute_line_offsets_bytes():
+    offsets = []
+    offset = 0
+    for line in text:
+        offsets.append(offset)
+        offset += len(line.encode('utf-8', errors='replace')) + 1
+    return offsets
+
+def offset_to_linecol_bytes(offset, line_offsets):
+    i = bisect.bisect_right(line_offsets, offset) - 1
+    i = max(0, min(i, len(line_offsets) - 1))
+    byte_col = offset - line_offsets[i]
+    line_bytes = text[i].encode('utf-8', errors='replace')
+    char_col = len(line_bytes[:byte_col].decode('utf-8', errors='ignore'))
+    return i, char_col
+
+def cursor_byte_offset():
+    line_offsets = compute_line_offsets_bytes()
+    prefix_bytes = text[cursor[1]][:cursor[0]].encode('utf-8', errors='replace')
+    return line_offsets[cursor[1]] + len(prefix_bytes)
+
+def write_temp_snapshot():
+    fd, tmp_path = tempfile.mkstemp(suffix=".searchtmp")
+    with os.fdopen(fd, 'w') as f:
+        f.write("\n".join(text))
+    return tmp_path
+
+def rg_search_next(pattern_str, from_line_col, wrap=True):
+    if not RG_PATH:
+        return None, "ripgrep not found"
+
+    tmp_path = write_temp_snapshot()
+    try:
+        try:
+            result = subprocess.run(
+                [RG_PATH, "--json", "-e", pattern_str, tmp_path],
+                capture_output=True, text=True, timeout=10
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Search timed out"
+    finally:
+        os.remove(tmp_path)
+
+    if result.returncode not in (0, 1):
+        return None, "Regex error"
+
+    matches = []
+    for line in result.stdout.splitlines():
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "match":
+            continue
+        data = obj["data"]
+        line_no = data["line_number"] - 1
+        for sm in data["submatches"]:
+            matches.append((line_no, sm["start"]))
+
+    if not matches:
+        return None, "No matches found"
+
+    from_line, from_col = from_line_col
+    for (ln, col) in matches:
+        if (ln, col) > (from_line, from_col):
+            return (ln, col), None
+    if wrap:
+        return matches[0], None
+    return None, "No matches found"
+
+def build_text_mmap():
+    data = "\n".join(text).encode('utf-8', errors='replace')
+    size = max(len(data), 1)
+    mm = mmap.mmap(-1, size)
+    if data:
+        mm.write(data)
+        mm.seek(0)
+    return mm, len(data)
+
+def mmap_find_next(pattern_str, from_offset):
+    mm, size = build_text_mmap()
+    try:
+        try:
+            pattern = re.compile(pattern_str.encode('utf-8'), re.MULTILINE)
+        except re.error as e:
+            return None, f"Invalid regex: {e}"
+        buf = mm[:size]
+        m = pattern.search(buf, from_offset)
+        if not m:
+            return None, "Replace complete"
+        return m, None
+    finally:
+        mm.close()
+
+def mmap_replace_all(pattern_str, replacement):
+    mm, size = build_text_mmap()
+    try:
+        try:
+            pattern = re.compile(pattern_str.encode('utf-8'), re.MULTILINE)
+        except re.error as e:
+            return None, f"Invalid regex: {e}"
+        buf = mm[:size]
+        new_buf, count = pattern.subn(replacement.encode('utf-8'), buf)
+        text[:] = new_buf.decode('utf-8', errors='replace').split('\n')
+        return count, None
+    finally:
+        mm.close()
+
+def mmap_apply_single(m, replacement):
+    mm, size = build_text_mmap()
+    try:
+        buf = mm[:size]
+        replaced_bytes = m.expand(replacement.encode('utf-8'))
+        new_buf = buf[:m.start()] + replaced_bytes + buf[m.end():]
+        text[:] = new_buf.decode('utf-8', errors='replace').split('\n')
+        return m.start() + len(replaced_bytes)
+    finally:
+        mm.close()
+
+def parse_substitute_command(cmd):
+    if not cmd.startswith('s/'):
+        return None
+    body = cmd[2:]
+    parts, current, i = [], '', 0
+    while i < len(body):
+        if body[i] == '\\' and i + 1 < len(body) and body[i+1] == '/':
+            current += '/'
+            i += 2
+        elif body[i] == '/':
+            parts.append(current)
+            current = ''
+            i += 1
+        else:
+            current += body[i]
+            i += 1
+    parts.append(current)
+    if len(parts) < 2:
+        return None
+    pattern = parts[0]
+    replacement = parts[1]
+    flags = parts[2] if len(parts) > 2 else ''
+    return pattern, replacement, flags
+
 dialog_surface = pygame.Surface((300,100))
 unsaved_dialog = unsavedDialog(dialog_surface)
 
@@ -380,6 +544,95 @@ while running:
             running = False
 
         elif event.type == pygame.KEYDOWN:
+            if mode != "normal":
+                if event.key == pygame.K_ESCAPE:
+                    mode = "normal"
+                    input_buffer = ""
+                    status_message = ""
+                elif mode == "search_input":
+                    if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        last_pattern = input_buffer
+                        input_buffer = ""
+                        match, err = rg_search_next(last_pattern, (cursor[1], cursor[0]), wrap=True)
+                        if match:
+                            cursor[1], cursor[0] = match
+                            scroll_to_cursor()
+                            text_surface = render_window()
+                            status_message = ""
+                        else:
+                            status_message = err
+                        mode = "normal"
+                    elif event.key in (pygame.K_BACKSPACE, 127, 8):
+                        input_buffer = input_buffer[:-1]
+                    elif event.unicode.isprintable():
+                        input_buffer += event.unicode
+                elif mode == "command_input":
+                    if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        cmd = input_buffer
+                        input_buffer = ""
+                        parsed = parse_substitute_command(cmd)
+                        if not parsed:
+                            status_message = "Bad command (use s/pattern/replacement/[g])"
+                            mode = "normal"
+                        else:
+                            pattern, replacement, flags = parsed
+                            if 'g' in flags:
+                                pygame.display.set_caption(caption + "*")
+                                count, err = mmap_replace_all(pattern, replacement)
+                                text_surface = render_window()
+                                status_message = err if err else f"Replaced {count} occurrence(s)"
+                                mode = "normal"
+                            else:
+                                last_pattern = pattern
+                                current_replacement = replacement
+                                m, err = mmap_find_next(pattern, 0)
+                                if not m:
+                                    status_message = err
+                                    mode = "normal"
+                                else:
+                                    line_offsets = compute_line_offsets_bytes()
+                                    cursor[1], cursor[0] = offset_to_linecol_bytes(m.start(), line_offsets)
+                                    scroll_to_cursor()
+                                    text_surface = render_window()
+                                    mode = "replace_one_wait"
+                    elif event.key in (pygame.K_BACKSPACE, 127, 8):
+                        input_buffer = input_buffer[:-1]
+                    elif event.unicode.isprintable():
+                        input_buffer += event.unicode
+                elif mode == "replace_one_wait":
+                    if event.key in (pygame.K_y, pygame.K_RETURN, pygame.K_KP_ENTER):
+                        m, err = mmap_find_next(last_pattern, cursor_byte_offset())
+                        if m:
+                            pygame.display.set_caption(caption + "*")
+                            next_offset = mmap_apply_single(m, current_replacement)
+                            text_surface = render_window()
+                            nm, nerr = mmap_find_next(last_pattern, next_offset)
+                            if nm:
+                                line_offsets = compute_line_offsets_bytes()
+                                cursor[1], cursor[0] = offset_to_linecol_bytes(nm.start(), line_offsets)
+                                scroll_to_cursor()
+                            else:
+                                status_message = "Replace complete"
+                                mode = "normal"
+                        else:
+                            status_message = "Replace complete"
+                            mode = "normal"
+                    elif event.key in (pygame.K_n, pygame.K_SPACE):
+                        m, err = mmap_find_next(last_pattern, cursor_byte_offset())
+                        if m:
+                            nm, nerr = mmap_find_next(last_pattern, m.end())
+                            if nm:
+                                line_offsets = compute_line_offsets_bytes()
+                                cursor[1], cursor[0] = offset_to_linecol_bytes(nm.start(), line_offsets)
+                                scroll_to_cursor()
+                            else:
+                                status_message = "Replace complete"
+                                mode = "normal"
+                        else:
+                            status_message = "Replace complete"
+                            mode = "normal"
+                continue
+
             if event.key == pygame.K_ESCAPE:
                 captioncheck = pygame.display.get_caption()[0][-1]
                 if captioncheck == "*":
@@ -573,6 +826,18 @@ while running:
                     sel_origin = (cursor[0], cursor[1])
                 else:
                     sel_origin = None
+            elif event.key == pygame.K_f and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
+                mode = "search_input"
+                input_buffer = ""
+                status_message = ""
+                selection = False
+                sel_origin = None
+            elif event.key == pygame.K_r and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
+                mode = "command_input"
+                input_buffer = ""
+                status_message = ""
+                selection = False
+                sel_origin = None
             elif event.mod & pygame.KMOD_CTRL:
                 pass
             else:
@@ -591,6 +856,19 @@ while running:
         show_selections(sel_origin, screen)
     pygame.draw.rect(screen, cursor_color, (cw*(cursor[0]-window_x[0]), (ch+offset_)*(cursor[1]-window_y[0]), cw, ch), 2)
     screen.blit(text_surface, (0,0))
+
+    if mode == "search_input":
+        bar = dialog_font.render(f"Find:{input_buffer}", False, (0,0,0), bgcolor=(200,200,0))
+        screen.blit(bar, (0, HEIGHT-20))
+    elif mode == "command_input":
+        bar = dialog_font.render(f"Find-Replace:{input_buffer}", False, (0,0,0), bgcolor=(200,200,0))
+        screen.blit(bar, (0, HEIGHT-20))
+    elif mode == "replace_one_wait":
+        bar = dialog_font.render("Replace? y=yes  n=skip  Esc=stop", False, (0,0,0), bgcolor=(200,200,0))
+        screen.blit(bar, (0, HEIGHT-20))
+    elif status_message:
+        bar = dialog_font.render(status_message, False, (0,0,0), bgcolor=(0,150,0))
+        screen.blit(bar, (0, HEIGHT-20))
 
     if unsaved_exit == True:
         screen.blit(unsaved_dialog, ((WIDTH//2)-150, (HEIGHT//2)-50))
