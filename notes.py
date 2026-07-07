@@ -1030,6 +1030,16 @@ while running:
                 status_message = ""
                 selection = False
                 sel_origin = None
+            elif event.key == pygame.K_n and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False and selection == False:
+                if last_pattern:
+                    match, err = rg_search_next(last_pattern, (cursor[1], cursor[0]), wrap=True)
+                    if match:
+                        cursor[1], cursor[0] = match
+                        scroll_to_cursor()
+                        text_surface = render_window()
+                        status_message = ""
+                    else:
+                        status_message = err
             elif event.mod & pygame.KMOD_CTRL:
                 pass
             else:
