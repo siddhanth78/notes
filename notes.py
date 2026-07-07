@@ -932,7 +932,7 @@ while running:
                     slide_x(1)
                 cursor[0] += 1
                 text_surface = render_window()
-            elif event.key == pygame.K_RETURN and unsaved_exit == False and selection == False:
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and unsaved_exit == False and selection == False:
                 pygame.display.set_caption(caption + "*")
                 text.insert(cursor[1]+1, "")
                 text[cursor[1]+1] = text[cursor[1]][cursor[0]:]
