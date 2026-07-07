@@ -61,16 +61,23 @@ def open_note_explorer(base_dir):
         nonlocal current_dir
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_CYAN, -1)
-        curses.init_pair(2, curses.COLOR_WHITE, -1)
-        curses.init_pair(3, curses.COLOR_GREEN, -1)
+        curses.init_pair(1, curses.COLOR_CYAN, -1)    # directories
+        curses.init_pair(2, curses.COLOR_WHITE, -1)   # files
+        curses.init_pair(3, curses.COLOR_GREEN, -1)   # create actions
+        curses.init_pair(4, curses.COLOR_YELLOW, -1)  # rename/delete current dir
 
         selected = 0
         scroll = 0
         while True:
             curses.curs_set(0)
             entries = sorted(os.listdir(current_dir))
-            items = [("+ Create new note here", None, "new")]
+            items = [("+ Create new note here", None, "new"), ("+ Create new dir here", None, "newdir")]
+
+            if current_dir != base_dir:
+                items.append(("+ Rename this directory", None, "renamedir"))
+                if not os.listdir(current_dir):
+                    items.append(("+ Delete this directory", None, "deletedir"))
+
             for e in entries:
                 full = current_dir / e
                 if full.is_dir():
@@ -100,8 +107,10 @@ def open_note_explorer(base_dir):
             for row, (name, _, kind) in enumerate(visible_items):
                 idx = scroll + row
                 prefix = "> " if idx == selected else "  "
-                if kind == "new":
+                if kind in ("new", "newdir"):
                     color = curses.color_pair(3)
+                elif kind in ("renamedir", "deletedir"):
+                    color = curses.color_pair(4)
                 elif kind == "dir":
                     color = curses.color_pair(1)
                 else:
@@ -162,6 +171,35 @@ def open_note_explorer(base_dir):
                         target_dir = current_dir / rel.parent
                         target_dir.mkdir(parents=True, exist_ok=True)
                         return target_dir / rel.name
+                elif kind == "newdir":
+                    dname = prompt_dirname(stdscr, current_dir)
+                    if dname == "__CANCEL__" or not dname:
+                        continue
+                    new_dir_path = current_dir / dname
+                    if new_dir_path.exists():
+                        continue
+                    new_dir_path.mkdir(parents=True, exist_ok=False)
+                    selected = 0
+                    scroll = 0
+                elif kind == "renamedir":
+                    parent = current_dir.parent
+                    old_name = current_dir.name
+                    new_name = prompt_dirname_rename(stdscr, parent, old_name)
+                    if new_name == "__CANCEL__" or not new_name:
+                        continue
+                    new_path = parent / new_name
+                    if new_path.exists():
+                        continue
+                    current_dir.rename(new_path)
+                    current_dir = new_path
+                    selected = 0
+                    scroll = 0
+                elif kind == "deletedir":
+                    parent = current_dir.parent
+                    current_dir.rmdir()
+                    current_dir = parent
+                    selected = 0
+                    scroll = 0
             elif key == 27:
                 return None
 
@@ -193,6 +231,82 @@ def prompt_filename(stdscr, current_dir):
             buf = buf[:-1]
         elif 32 <= key <= 126:
             buf += chr(key)
+
+
+def prompt_dirname(stdscr, current_dir):
+    curses.curs_set(1)
+    buf = ""
+    error = ""
+    while True:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "Create new directory", curses.A_BOLD)
+        label = f"New dir: {current_dir}/"
+        stdscr.addstr(2, 0, label, curses.color_pair(1))
+        stdscr.addstr(2, len(label), buf)
+
+        h, w = stdscr.getmaxyx()
+        if error:
+            stdscr.addstr(4, 0, error[:w-1], curses.A_BOLD)
+        footer = "Letters, numbers, _ and - only  |  Enter to create  |  Esc to cancel"
+        stdscr.addstr(h - 1, 0, footer[:w-1], curses.A_DIM)
+        stdscr.move(2, len(label) + len(buf))
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (curses.KEY_ENTER, 10, 13):
+            name = buf.strip()
+            if not name:
+                return None
+            if not all(c.isalnum() or c in '_-' for c in name):
+                error = "Invalid: only letters, numbers, _ and - allowed"
+                continue
+            return name
+        elif key == 27:
+            return "__CANCEL__"
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            buf = buf[:-1]
+            error = ""
+        elif 32 <= key <= 126:
+            buf += chr(key)
+            error = ""
+
+
+def prompt_dirname_rename(stdscr, parent_dir, old_name):
+    curses.curs_set(1)
+    buf = old_name
+    error = ""
+    while True:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "Rename directory", curses.A_BOLD)
+        label = f"Rename: {parent_dir}/"
+        stdscr.addstr(2, 0, label, curses.color_pair(1))
+        stdscr.addstr(2, len(label), buf)
+
+        h, w = stdscr.getmaxyx()
+        if error:
+            stdscr.addstr(4, 0, error[:w-1], curses.A_BOLD)
+        footer = "Letters, numbers, _ and - only  |  Enter to rename  |  Esc to cancel"
+        stdscr.addstr(h - 1, 0, footer[:w-1], curses.A_DIM)
+        stdscr.move(2, len(label) + len(buf))
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (curses.KEY_ENTER, 10, 13):
+            name = buf.strip()
+            if not name:
+                return None
+            if not all(c.isalnum() or c in '_-' for c in name):
+                error = "Invalid: only letters, numbers, _ and - allowed"
+                continue
+            return name
+        elif key == 27:
+            return "__CANCEL__"
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            buf = buf[:-1]
+            error = ""
+        elif 32 <= key <= 126:
+            buf += chr(key)
+            error = ""
 
 
 def file_action_menu(stdscr, filepath):
