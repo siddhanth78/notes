@@ -127,7 +127,29 @@ def open_note_explorer(base_dir):
                     selected = 0
                     scroll = 0
                 elif kind == "file":
-                    return path
+                    result_path = None
+                    while True:
+                        action = file_action_menu(stdscr, path)
+                        if action == "Open":
+                            result_path = path
+                            break
+                        elif action == "Delete":
+                            os.remove(path)
+                            break
+                        elif action == "Rename":
+                            new_name = prompt_rename(stdscr, current_dir, path.name)
+                            if new_name == "__CANCEL__" or not new_name:
+                                continue
+                            new_path = current_dir / new_name
+                            if new_path.exists():
+                                continue
+                            path.rename(new_path)
+                            break
+                        else:
+                            break
+                    if result_path is not None:
+                        return result_path
+                    selected = min(selected, max(0, len(os.listdir(current_dir))))
                 elif kind == "new":
                     fname = prompt_filename(stdscr, current_dir)
                     if fname == "__CANCEL__":
@@ -171,6 +193,62 @@ def prompt_filename(stdscr, current_dir):
             buf = buf[:-1]
         elif 32 <= key <= 126:
             buf += chr(key)
+
+
+def file_action_menu(stdscr, filepath):
+    options = ["Open", "Delete", "Rename", "Cancel"]
+    selected = 0
+    while True:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "File options", curses.A_BOLD)
+        stdscr.addstr(1, 0, f"File: {filepath.name}")
+        for idx, opt in enumerate(options):
+            prefix = "> " if idx == selected else "  "
+            attr = curses.A_REVERSE if idx == selected else curses.A_NORMAL
+            stdscr.addstr(idx + 3, 0, prefix + opt, attr)
+
+        h, w = stdscr.getmaxyx()
+        footer = "↑/↓ move  Enter select  Esc cancel"
+        stdscr.addstr(h - 1, 0, footer[:w-1], curses.A_DIM)
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key == curses.KEY_UP:
+            selected = max(0, selected - 1)
+        elif key == curses.KEY_DOWN:
+            selected = min(len(options) - 1, selected + 1)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            return options[selected]
+        elif key == 27:
+            return "Cancel"
+
+
+def prompt_rename(stdscr, current_dir, old_name):
+    curses.curs_set(1)
+    buf = old_name
+    while True:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "Rename note", curses.A_BOLD)
+        label = f"Rename: {current_dir}/"
+        stdscr.addstr(2, 0, label, curses.color_pair(1))
+        stdscr.addstr(2, len(label), buf)
+
+        h, w = stdscr.getmaxyx()
+        footer = "Type new name + Enter  |  Esc to cancel"
+        stdscr.addstr(h - 1, 0, footer[:w-1], curses.A_DIM)
+        stdscr.move(2, len(label) + len(buf))
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (curses.KEY_ENTER, 10, 13):
+            return buf.strip() if buf.strip() else None
+        elif key == 27:
+            return "__CANCEL__"
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            buf = buf[:-1]
+        elif 32 <= key <= 126:
+            buf += chr(key)
+
 
 if len(sys.argv) > 1:
     filepath = Path(sys.argv[1])
