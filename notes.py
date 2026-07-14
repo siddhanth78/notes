@@ -11,6 +11,7 @@ import bisect
 import subprocess
 import json
 import shutil
+from collections import deque
 
 pygame.init()
 
@@ -51,6 +52,19 @@ SUPPORTED_EXTENSIONS = [
     ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env", ".xml",
     ".rst", ".tex", ".log", ".tsv", ".gitignore", ".editorconfig"
 ]
+
+backspace_streak = False
+space_streak = False
+line_remove_streak = False
+newline_streak = False
+addbelow_streak = False
+addabove_streak = False
+emptyline_streak = False
+
+undo_stack = deque(maxlen=25)
+
+def push_undo():
+    undo_stack.append((list(text), cursor[0], cursor[1]))
 
 def open_note_explorer(base_dir):
     base_dir = Path(base_dir).expanduser()
@@ -728,6 +742,8 @@ def parse_substitute_command(cmd):
 dialog_surface = pygame.Surface((300,100))
 unsaved_dialog = unsavedDialog(dialog_surface)
 
+push_undo()
+
 while running:
     screen.fill((32,32,32))
 
@@ -825,6 +841,19 @@ while running:
                             mode = "normal"
                 continue
 
+            if event.key != pygame.K_BACKSPACE:
+                backspace_streak = False
+                line_remove_streak = False
+                emptyline_streak = False
+            if event.key != pygame.K_SPACE:
+                space_streak = False
+            if event.key != pygame.K_RETURN:
+                newline_streak = False
+            if not (event.key == pygame.K_o and (event.mod & pygame.KMOD_CTRL) and not (event.mod & pygame.KMOD_SHIFT)):
+                addbelow_streak = False
+            if not (event.key == pygame.K_o and (event.mod & pygame.KMOD_CTRL) and (event.mod & pygame.KMOD_SHIFT)):
+                addabove_streak = False
+
             if event.key == pygame.K_ESCAPE:
                 captioncheck = pygame.display.get_caption()[0][-1]
                 if captioncheck == "*":
@@ -892,6 +921,12 @@ while running:
             elif event.key == pygame.K_BACKSPACE and unsaved_exit == False and selection == False:
                 pygame.display.set_caption(caption + "*")
                 if cursor[0] > 0 and text[cursor[1]]:
+                    if not backspace_streak:
+                        push_undo()
+                    elif text[cursor[1]][cursor[0]-1] == " ":
+                        push_undo()
+                    backspace_streak = True
+                    emptyline_streak = True
                     text[cursor[1]] = text[cursor[1]][:cursor[0]-1] + text[cursor[1]][cursor[0]:]
                     if cursor[0] <= window_x[0]+3:
                         if window_x[0] > 0:
@@ -900,6 +935,12 @@ while running:
                     cursor[0] = max(0, cursor[0])
                     text_surface = render_window()
                 elif cursor[0] == 0 and cursor[1] <= window_y[0]+3 and cursor[1] > 0:
+                    if not line_remove_streak:
+                        push_undo()
+                    elif text[cursor[1]] == "" and cursor[1] > 0 and emptyline_streak == False:
+                        push_undo()
+                    line_remove_streak = True
+                    emptyline_streak = True
                     if window_y[0] > 0:
                         slide_y(-1)
                     cursor[0] = len(text[cursor[1]-1])
@@ -910,6 +951,12 @@ while running:
                     cursor[1] -= 1
                     text_surface = render_window()
                 elif cursor[0] == 0 and cursor[1]>0:
+                    if not line_remove_streak:
+                        push_undo()
+                    elif text[cursor[1]] == "" and cursor[1] > 0 and emptyline_streak == False:
+                        push_undo()
+                    line_remove_streak = True
+                    emptyline_streak = True
                     cursor[0] = len(text[cursor[1]-1])
                     popped = text.pop(cursor[1])
                     text[cursor[1]-1] += popped
@@ -917,6 +964,10 @@ while running:
                         slide_x(cursor[0] - ((WIDTH//cw)-1))
                     cursor[1] -= 1
                     text_surface = render_window()
+                elif cursor[0] == 0 and cursor[1] == 0:
+                    if emptyline_streak == False:
+                        push_undo()
+                    emptyline_streak = True
             elif event.key == pygame.K_TAB and unsaved_exit == False and selection == False:
                 pygame.display.set_caption(caption + "*")
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " "*4 + text[cursor[1]][cursor[0]:]
@@ -926,6 +977,9 @@ while running:
                 cursor[0] += 4
                 text_surface = render_window()
             elif event.key == pygame.K_SPACE and unsaved_exit == False and selection == False:
+                if not space_streak:
+                    push_undo()
+                space_streak = True
                 pygame.display.set_caption(caption + "*")
                 text[cursor[1]] = text[cursor[1]][:cursor[0]] + " " + text[cursor[1]][cursor[0]:]
                 if cursor[0] == window_x[1]:
@@ -933,6 +987,9 @@ while running:
                 cursor[0] += 1
                 text_surface = render_window()
             elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and unsaved_exit == False and selection == False:
+                if not newline_streak:
+                    push_undo()
+                newline_streak = True
                 pygame.display.set_caption(caption + "*")
                 text.insert(cursor[1]+1, "")
                 text[cursor[1]+1] = text[cursor[1]][cursor[0]:]
@@ -956,7 +1013,19 @@ while running:
                 finally:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
+            elif event.key == pygame.K_u and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
+                if undo_stack:
+                    prev_text, px, py = undo_stack.pop()
+                    text[:] = prev_text
+                    cursor[0] = px
+                    cursor[1] = py
+                    scroll_to_cursor()
+                    text_surface = render_window()
+                    pygame.display.set_caption(caption + "*")
             elif event.key == pygame.K_o and (event.mod & pygame.KMOD_CTRL) and (event.mod & pygame.KMOD_SHIFT) and unsaved_exit == False and selection == False:
+                if not addabove_streak:
+                    push_undo()
+                addabove_streak = True
                 pygame.display.set_caption(caption + "*")
                 text.insert(cursor[1] + 1, "")
                 cursor[1] += 1
@@ -964,12 +1033,16 @@ while running:
                 scroll_to_cursor()
                 text_surface = render_window()
             elif event.key == pygame.K_o and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False and selection == False:
+                if not addbelow_streak:
+                    push_undo()
+                addbelow_streak = True
                 pygame.display.set_caption(caption + "*")
                 text.insert(cursor[1], "")
                 cursor[0] = 0
                 scroll_to_cursor()
                 text_surface = render_window()
             elif event.key == pygame.K_d and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False and selection == False:
+                push_undo()
                 pygame.display.set_caption(caption + "*")
                 y = cursor[1]
                 del text[y]
@@ -992,6 +1065,7 @@ while running:
                 selection = False
                 sel_origin = None
             elif event.key == pygame.K_x and selection and unsaved_exit == False:
+                push_undo()
                 pygame.display.set_caption(caption + "*")
                 safe_copy_lines(get_selection_lines(sel_origin))
                 delete_selection(sel_origin)
@@ -1000,6 +1074,7 @@ while running:
                 scroll_to_cursor()
                 text_surface = render_window()
             elif event.key == pygame.K_p and selection and unsaved_exit == False:
+                push_undo()
                 pygame.display.set_caption(caption + "*")
                 delete_selection(sel_origin)
                 selection = False
@@ -1008,6 +1083,7 @@ while running:
                 scroll_to_cursor()
                 text_surface = render_window()
             elif event.key == pygame.K_p and (event.mod & pygame.KMOD_CTRL) and unsaved_exit == False:
+                push_undo()
                 pygame.display.set_caption(caption + "*")
                 paste_lines(safe_paste_lines())
                 scroll_to_cursor()
